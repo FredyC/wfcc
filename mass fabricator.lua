@@ -9,119 +9,213 @@ if mon == nil then
   os.shutdown()
 end
 
-runTimeDelay = 60 * 15 -- Number of seconds for fabricator to stay active after MFSU stop reporting full
+os.unloadAPI("bundled")
+os.loadAPI("/disk/bundled")
+
+--[[
+  Number of seconds for fabricator to stay active after MFSU stops reporting full.
+  This number is increased by amount of produced scraps
+--]]
+runTimeDelay = 60 * 5
 
 cable = bundled.wrap("back", {
-  setmass = colors.green, -- fabricator main switch
+  mainswitch = colors.red, -- signal from lever to stop whole system
+  stopfab = colors.green, -- stop the fabricator on signal
   mfsufull = colors.gray, -- input signal when MFSU is full of energy
   getmatter = colors.white, -- signal Filter on top of fabricator to pull UU Matter
-  update = colors.red, -- input signal to update program and reboot
   getmats = colors.yellow, -- signal Retriever to get mats to be scraped
   engines = colors.brown, -- signal for Redstone engines to start pulling scrap from Recyclers
   countscrap = colors.blue, -- counter for created scraps
   countmatter = colors.orange -- counter for created UU matter
 })
 
--- Helper function to write text on the monitor at specified coordinates
-writeAt = function(x, y, txt)
-  mon.setCursorPos(x, y)
-  mon.write(txt)
-end
-
 mon.clear()
 mon.setTextScale(1) -- set smallest scale
 w, h = mon.getSize() -- size of the attached monitor
 
-local title = "Mass production of UU Matter"
-os.setComputerLabel(title)
-writeAt((w / 2) - (string.len(title) / 2), 1, title)
+-- Helper function to write text on the monitor at specified coordinates
+writeAt = function(x, y, txt, clearLine)
+  mon.setCursorPos(x, y)
+  if clearLine then mon.clearLine() end
+  mon.write(txt)
+end
 
-i = 0 -- internal counter for seconds
-running = true -- overall status of whole program (set to FALSE to stop parallels)
-started = os.clock() -- record time of start
+writeC = function(y, txt)
+  writeAt((w / 2) - (string.len(txt) / 2) + 1, y, txt)
+end
+
+running = false -- overall status of whole program (set to FALSE to stop parallels)
+started = 0 -- recorded time of start
 fabricating = false -- current status of the fabricator  
 scrap = 0 -- total number of scraps produced
 matter = 0 -- total number of matter produced
 
+-- Parallel function to watch energy source and control fabricator 
+watchPower = function()
+  local activeFrom, activeTill = 0, 0
+  local y = 3
+  local lastScrapCount = 0
+  
+  -- Update line with state of MFSU
+  writeState = function(state)
+    writeAt(1, y, "MFSU Status: "..state, true)
+  end
+  
+  -- Clear text in line with sub state information 
+  clearSubState = function()
+    writeAt(1, y + 1, "", true) -- clear the line about deactivation
+  end    
+  
+  -- Function to enable/disable fabricator
+  doWork = function(enabled)
+    cable("stopfab", not enabled)
+    fabricating = enabled
+  end
+  
+  doWork(false) -- safety policy to turn off fabricator after OS reboot   
+  
+  -- Main loop controlling the fabricator
+  while running do
+    os.pullEvent() -- any event triggers checks
+    
+    -- MFSU is full, start processing
+    if cable("mfsufull") then
+      print("full")
+      writeState("currently full")
+      clearSubState()      
+      doWork(true) -- start fabricator
+      activeFrom = os.clock() -- record start time
+      activeTill = activeFrom + runTimeDelay + scrap - lastScrapCount -- when it will stop
+      lastScrapCount = scrap -- remember count of scrap so it's not counted next time
+
+    -- MFSU reports not full, however it was full recently     
+    elseif (activeFrom > 0) then
+      
+      -- time for deactivation reached
+      if (os.clock() >= activeTill) then
+        print("stop fabricating !")
+        writeState("stopping machine...")
+        clearSubState()
+        doWork(false) -- stop fabricator
+        activeFrom = 0
+
+      -- display countdown for deactivation  
+      elseif (os.clock() >= activeFrom + 1) then -- slight delay for display to forbid flickr
+        writeState(string.format("was full %u secs ago", os.clock() - activeFrom))
+        writeC(y + 1, string.format("will deactivate in %u secs", math.floor(activeTill - os.clock())), true)
+      end
+        
+    -- MFSU still didn't reported full status
+    else
+      writeState("not full yet, waiting...")
+      clearSubState()
+    end
+    
+    sleep(1) -- just little delay for performance sake
+  end
+
+  print("watchPower interrupted")
+  doWork(false) -- turn off fabricator
+  os.pullEvent("mainswitch")
+  watchPower() -- restart function when machine is turned on again  
+end
+
 -- Parallel function to monitor the production
 counter = function()
-  while running do
-    os.pullEvent("redstone")
-    if cable("countscrap") then scrap = scrap + 1
-    elseif cable("countmatter") then matter = matter + 1
-    else return end
+  display = function()
     -- update production display 
-    mon.setCursorPos(1, 5)
-    mon.clearLine()
-    mon.write("Produced %05u scraps and %04u of matter", scrap, matter)
+    writeAt(1, 7, string.format("Produced %05u scraps", scrap), true)
+    writeAt(10, 8, string.format("%05u matter", matter), true)
   end
-end
-
-writeAt(1, 3, "MFSU Status:")
-
--- Function to enable/disable fabricator
-setMass = function(enabled)
-  cable("setmass", not enabled)
-  fabricating = enabled
-end  
-
--- Parallel function to watch energy source to shutdown machinery 
-watchPower = function()
-  local activeFrom = 0
-  local x = 14
+  
+  display() -- initial display of production before anything get produced
+     
   while running do
     os.pullEvent("redstone")
-    if cable("mfsufull") then -- MFSU is full, start processing
-      writeAt(x, 3, "currently full")
-      setMass(true) -- start fabricator
-      activeFrom = os.clock() -- record start time 
-    elseif (activeFrom > 0) then
-      local activeTill = activeFrom + runTimeDelay
-      if (os.clock() >= activeTill) then -- time for deactivation reached
-        setMass(false) -- stop fabricator
-        activeFrom = 0
-        os.queueEvent("redstone") -- fake redstone event to run next round of loop
-      else      
-        writeAt(x, 3, string.format("was full %u seconds ago", os.clock() - activeFrom))
-        writeAt(x, 4, string.format("will deactivate in %u seconds", math.floor(activeTill - os.clock())))
-      end
-    else
-      writeAt(x, 3, "waiting for FULL status reported...")
-    end
+    -- update count of scraps
+    if cable("countscrap") then 
+      scrap = scrap + 1 
+      display()
+    -- update count of matter
+    elseif cable("countmatter") then 
+      matter = matter + 1 
+      display()
+    end      
   end
+  
+  os.pullEvent("mainswitch")
+  counter() -- restart function when machine is turned on again    
 end
 
--- Main function
-main = function()
-  cable("engines", true) -- Turn on the engines for scrap pulling
-  
-  every = function(sec)
-    return math.floor(started % sec) == 0
+-- Function for the timed actions
+timer = function()
+  every = function(sec) -- returns TRUE if given amount of seconds has elapsed
+    return (math.floor(os.clock()) % sec == 0)
   end
   
-  while true do
-    -- Button was hit, stop everything and 
-    if cable("update") then
-      running = false
-      break
-    end
+  mats = false
   
-    cable("getmats", every(2)) -- Every 2 seconds signal Retriever to get mats
-    cable("getmatter", fabricating and every(30)) -- Every 30 seconds signal Filter to pull matter out of fabricator
+  while running do 
+    cable("getmats", mats)
+    mats = not mats
     
-    -- Write uptime every 5 seconds
-    if every(5) then
-      uptimeMsg = string.format("Uptime: %05u", os.clock() - started)
+    -- every 15 seconds signal Filter to pull matter out of fabricator
+    cable("getmatter", fabricating and every(15))
+    
+    -- write uptime every 2 seconds
+    if every(2) then
+      uptimeMsg = string.format("Uptime: %06u", os.clock() - started)
       writeAt(w - string.len(uptimeMsg), h, uptimeMsg)
     end
   
-    sleep(0.5)
+    sleep(0.4)
+  end
+  
+  mats = true -- signal stays on, as Buffer could still have items and pull them
+  cable("getmats", mats)
+  
+  os.pullEvent("mainswitch")
+  timer() -- restart function when machine is turned on again  
+end
+
+
+-- Main function
+main = function()
+  displayShutdown = function()
+    mon.clear()
+    writeC(h / 2, "Shutdown is active")
+    writeC(h, "Switch nearby lever to kick off !")
+  end
+    
+  while true do
+    -- switch is turned on
+    if cable("mainswitch") then
+      -- it's not running, let's start
+      if not running then
+        mon.clear()
+        local title = "Production of UU Matter"
+        os.setComputerLabel(title)
+        writeC(1, title)
+      
+        started = os.clock()
+        running = true
+        print("START")
+        os.queueEvent("mainswitch")
+      end
+    -- shut it down
+    elseif running then
+      running = false
+      print("SHUTDOWN")
+      displayShutdown()
+    else
+      displayShutdown()
+    end
+          
+    cable("engines", running) -- control redstone engines depending on state
+    
+    os.startTimer(3) -- little safeguard in case no events are coming
+    os.pullEvent()
   end
 end
 
-parallel.waitForAll(main, watchPower, counter)
-
-cable(false) -- Reset all output
-setMass(false) -- Stop the fabricator
- 
-shell.run("update")
+parallel.waitForAll(main, watchPower, timer, counter)

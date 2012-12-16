@@ -1,6 +1,6 @@
 --[[
   API for easier access to bundled cables.
-  Version 0.1
+  Version 0.3
 
   Call wrap function with side of bundled cable and 
   table object containing map where key is name for 
@@ -12,13 +12,21 @@
     extra = colors.green
   })
 
-  Then you can call simply
+  -- To read input simply supply name of cable
   cable("button") -- returns TRUE if there is Red signal on input
-  cable("output", true) -- send Blue signal
+  
+  -- Result from more inputs can be combined using table
   cable({"button","extra"}) -- logical AND for given inputs giving one boolean result
+  
+  -- To set output use second boolean argument
+  cable("output", true) -- send Blue signal
+  
+  -- More output cables can be set at once too
   cable({"output","extra"}, false) -- setting multiple outputs to same result
-  cable(false) -- turn off all configured colors on cable 
-
+  
+  -- Finally when you specify just boolean value for the first argument, it will set all configured cables to that value
+  cable(false) -- turn off all configured colors on cable
+   
 --]]
 
 local dbg = function(msg)
@@ -36,7 +44,6 @@ function wrap(side, config)
       print(string.format("Warning: Cable named %s has duplicate color %s", n, tostring(c)))
     else  
       combined = colors.combine(combined, c) 
-      dbg(string.format("Combine %s - %u = %u", n, c, combined))
     end
   end
 
@@ -45,17 +52,18 @@ function wrap(side, config)
 
   -- Sets the output cable in bundle
   set = function(what, how)
+    --dbg(string.format("Set %s to %s", tostring(what), how and "On" or "Off"))
     if (type(what) == "string") then what = config[what] end
     result = how and colors.combine(currentOutput, what) or colors.subtract(currentOutput, what)
-    rs.setBundledOutput(side, result) 
+    rs.setBundledOutput(side, result)
     currentOutput = result
-    dbg(string.format("Set %s to %s = %u", what, how and "true" or "false", currentOutput))    
   end
 
   -- Checks input in bundle
   check = function(what)
+    name = tostring(what)
     if (type(what) == "string") then what = config[what] end
-    dbg(string.format("Check %u = %u", what, rs.getBundledInput(side)))
+    --dbg(string.format("Check %s = %s", name, rs.testBundledInput(side, what) and "On" or "Off"))
     return rs.testBundledInput(side, what)
   end
 
