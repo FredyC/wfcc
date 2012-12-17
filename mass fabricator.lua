@@ -50,6 +50,23 @@ fabricating = false -- current status of the fabricator
 scrap = 0 -- total number of scraps produced
 matter = 0 -- total number of matter produced
 
+setup = 1
+while true do
+  if setup == 1 then
+    print("Do you want to setup production numbers ? [Y/N]")
+    ans = string.lower(read())
+    if "y" == ans then setup = 2 elseif "n" == ans then break end
+  elseif setup == 2 then
+    print("Enter number of produced scraps:")
+    ans = tonumber(read())
+    if ans == nil then print("Not a number !") else scrap = ans setup = 3 end
+  elseif setup == 3 then
+    print("Enter number of produced matter:")
+    ans = tonumber(read())
+    if ans == nil then print("Not a number !") else matter = ans break end
+  end
+end    
+
 -- Parallel function to watch energy source and control fabricator 
 watchPower = function()
   local activeFrom, activeTill = 0, 0
@@ -117,7 +134,8 @@ watchPower = function()
   print("watchPower interrupted")
   doWork(false) -- turn off fabricator
   os.pullEvent("mainswitch")
-  watchPower() -- restart function when machine is turned on again  
+  watchPower() -- restart function when machine is turned on again
+  print("watchPower crashed")  
 end
 
 -- Parallel function to monitor the production
@@ -216,4 +234,9 @@ main = function()
   end
 end
 
-parallel.waitForAll(main, watchPower, timer, counter)
+while true do
+  parallel.waitForAny(main, watchPower, timer, counter)
+  running = false
+  print("Something crashed, restarting...")
+  sleep(3)
+end
