@@ -160,15 +160,13 @@ timer = function()
     mats = not mats
     
     -- every 15 seconds signal Filter to pull matter out of fabricator
-    cable("getmatter", fabricating and every(15))
+    cable("getmatter", every(15))
     
     -- write uptime every 2 seconds
-    if every(2) then
-      uptimeMsg = string.format("Uptime: %06u", os.clock() - started)
-      writeAt(w - string.len(uptimeMsg), h, uptimeMsg)
-    end
-  
-    sleep(0.4)
+    uptimeMsg = string.format("Uptime: %06u", os.clock() - started)
+    writeAt(w - string.len(uptimeMsg), h, uptimeMsg)
+    
+    os.pullEvent()
   end
   
   mats = true -- signal stays on, as Buffer could still have items and pull them
